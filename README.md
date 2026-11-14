@@ -18,20 +18,65 @@ Requirements: Python 3.10+ (`pip install -r requirements.txt`)
 # 1. On the relay host (a VPS, your PC, or wherever):
 python server.py --host 0.0.0.0 --port 8400
 
-# 2. Each participant:
-python client.py --host <relay-ip>
+# 2. Start the server and copy its printed SC1 invitation:
+python server.py --host 0.0.0.0 --advertise-host relay.example.com
+
+# 3. Every participant only needs the invitation:
+python client.py --room SC1.<endpoint>.<room-code>
 #   -> choose a username (asked every start, never stored)
-#   -> [C] create a room  -> share the XXXX-XXXX-XXXX-XXXX code out-of-band
-#   -> [J] join with a code you received
+
 ```
 
-Windows: use `run_client.bat` / `run_server.bat`.
+An `SC1` invitation contains the relay endpoint and the room secret
+in a shareable string. It is not encryption: anyone holding the invitation can
+decode the host, port, and room secret, and can join the room. Because the
+server now generates the room code, the relay process knows that secret. If the
+requested relay port is busy, the server automatically tries the next
+20 ports and prints the actual port that clients must use. Disable this with
+`--no-port-fallback`, or change the search range with `--port-fallback COUNT`.
+The client always prints the host and port it is attempting. Direct
+peer-to-peer connections are not supported; invitations currently point to a
+SecureChat relay server.
+
+Windows: use `windows/start_client.bat` / `windows/start_server.bat`.
+Linux/macOS: use `linux/start_client.sh` / `linux/start_server.sh`; both
+launchers work from any current directory and forward command-line options.
+
+```bash
+./linux/start_server.sh --host 0.0.0.0 --advertise-host relay.example.com
+./linux/start_client.sh --room "SC1...." --name Alice
+```
+
+## Browser dashboard
+
+For a simple launcher, run:
+
+```bash
+python webui.py
+```
+
+Open <http://127.0.0.1:8787>. The dashboard can start or stop the relay and
+launch a client using an invitation and username. It shows recent startup
+output, including the generated invitation and the actual fallback port.
+Use the theme selector to switch between Dark, Netherworld, Hacker,
+Terminalistic, Ocean, and Solarized styles; the selected theme is remembered
+in your browser. Starting a relay returns to the dashboard and opens the
+invitation in a popup; use **Show invitation** later to reopen it or copy it.
+The dashboard uses Tailwind CSS utilities from the official browser CDN for
+its responsive layout and interactive visual styling, so an internet
+connection is needed to load the enhanced styling; process controls still run
+locally.
+The client itself remains the existing terminal UI, launched as a managed
+process; the dashboard does not expose it to the network.
+
+The dashboard binds to localhost by default. Do not use `--host 0.0.0.0`
+unless it is protected by a firewall and an authenticated reverse proxy.
 
 ### In-chat commands
 | Command | Effect |
 |---|---|
 | `/help` | list commands |
-| `/code` | reveal the room code (status bar masks it) |
+| `/code` | show the shareable invitation (status bar masks it) |
 | `/who` | toggle the **Online Users** panel (also: click `* N online`, or F2) |
 | `/nick <name>` | change your username |
 | `/burn` | wipe the transcript from the screen + memory |
@@ -58,8 +103,9 @@ the relay never sends anyone's IP to anyone. What each party knows:
 Add `--tor` and the relay only sees a Tor exit IP too (see below).
 
 ### 2. End-to-end encryption
-* The first client generates the room code locally: **16 Crockford-base32
-  chars ≈ 80 bits**. It is never sent to the server.
+* The relay generates a **16 Crockford-base32 chars ≈ 80-bit** room code and
+  places it in the shareable invitation. The relay therefore knows the room
+  secret in the current server-generated invitation mode.
 * `master = Argon2id(code)` (scrypt fallback), then HKDF splits it into an
   **opaque room id** (what the wire/server sees) and the **AES-256-GCM key**.
 * Nonces are `tag(8 random) + counter(4)` per sender — no nonce reuse — and
@@ -156,6 +202,7 @@ Project layout:
 server.py      asyncio relay — RAM-only rooms, rate limits, replay dedupe, TLS
 client.py      username prompt, join flow, presence/roster, commands
 ui.py          prompt_toolkit TUI (clickable online-count, users overlay)
+webui.py       localhost browser dashboard for starting relay/client processes
 crypto.py      code generation, Argon2id+HKDF, AES-256-GCM, padding, replay
 protocol.py    NDJSON frames, validation, size caps
 transport.py   plain / TLS(+fingerprint pin) / Tor SOCKS5h connection factory

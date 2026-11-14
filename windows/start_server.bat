@@ -7,3 +7,4 @@ if %errorlevel%==0 (
 ) else (
     python "%~dp0server.py" %*
 )
+        

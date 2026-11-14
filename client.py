@@ -142,7 +142,8 @@ class Event:
 
 class ChatSession:
     def __init__(self, *, code: str, name: str, reader, writer,
-                 conn_info: transport.ConnInfo, plain_join: bool = False):
+                 conn_info: transport.ConnInfo, plain_join: bool = False,
+                 invitation_code: str | None = None):
         self.keys = crypto.derive_keys(code)
         self.room_id = self.keys.room_id
         self.display_code = crypto.format_code(code)
@@ -151,6 +152,7 @@ class ChatSession:
         self.writer = writer
         self.conn_info = conn_info
         self.plain_join = plain_join
+        self.invitation_code = invitation_code
         self.aad = crypto.make_aad(self.room_id)
         self.sender: crypto.Sender | None = None
         self.receiver: crypto.Receiver | None = None
@@ -350,7 +352,8 @@ class ChatSession:
         if cmd == "/help":
             self._sys("commands: /help  /code  /who  /nick <name>  /burn  /quit")
         elif cmd == "/code":
-            self._sys(f"*** room code: {self.display_code} — share it only with "
+            code = self.invitation_code or self.display_code
+            self._sys(f"*** invitation: {code} — share it only with "
                       f"people you want in the room ***")
         elif cmd == "/who":
             self._put(Event("ui", text="users"))
@@ -431,21 +434,33 @@ def prompt_username() -> str:
 def prompt_room_code(create: bool) -> str:
     if create:
         code = crypto.normalize_code(crypto.generate_room_code())
-        print()
-        print(f"  Your room code: {code}")
-        print("  Share it ONLY with people you want in the room.")
-        print("  Anyone with the code can join; it is never sent to the server.")
-        print()
         return code
     while True:
         try:
-            raw = input("Enter the room code (XXXX-XXXX-XXXX-XXXX): ")
+            raw = input("Enter the room code or invitation: ")
         except (EOFError, KeyboardInterrupt):
             raise SystemExit(1)
         try:
             return crypto.normalize_code(raw)
         except ValueError as exc:
             print(f"  ! {exc}")
+
+
+def prompt_room_reference(default_host: str, default_port: int) -> crypto.Invitation:
+    while True:
+        try:
+            raw = input("Enter the room code or invitation: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit(1)
+        try:
+            return crypto.parse_invitation(raw)
+        except ValueError:
+            try:
+                code = crypto.normalize_code(raw)
+            except ValueError as exc:
+                print(f"  ! {exc}; invitations start with SC1.")
+            else:
+                return crypto.Invitation(default_host, default_port, code)
 
 
 def confirm_fingerprint(fp: str) -> bool:
@@ -471,7 +486,7 @@ def parse_args(argv=None):
     )
     ap.add_argument("--host", default=DEFAULT_HOST)
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--room", help="room code (interactive prompt if omitted)")
+    ap.add_argument("--room", help="room code or SC1 invitation (interactive prompt if omitted)")
     ap.add_argument("--name", help="username (interactive prompt if omitted)")
     ap.add_argument("--tls", action="store_true", help="use TLS to the relay")
     ap.add_argument("--tls-fp", help="pinned server TLS fingerprint (sha256 hex)")
@@ -501,24 +516,45 @@ async def run(args) -> None:
 
     # -- room code ------------------------------------------------------------
     created = False
+    invitation: crypto.Invitation | None = None
     if args.room:
         try:
-            code = crypto.normalize_code(args.room)
+            invitation = crypto.parse_invitation(args.room)
         except ValueError as exc:
-            raise SystemExit(f"error: {exc}")
-        if not crypto.format_code(code) == args.room.strip().upper().replace(" ", ""):
+            try:
+                code = crypto.normalize_code(args.room)
+            except ValueError:
+                raise SystemExit(f"error: {exc}") from exc
+        else:
+            code = invitation.code
+            args.host = invitation.host
+            args.port = invitation.port
+            args.tls = invitation.tls
+        if invitation is None and not crypto.format_code(code) == args.room.strip().upper().replace(" ", ""):
             print("  note: hand-picked codes are weaker than generated ones — "
                   "use long, random codes.")
     elif interactive:
         ans = input("Create a new room [C] or join an existing one [J]? ").strip().lower()
         created = ans.startswith("c")
-        code = prompt_room_code(create=created)
+        if created:
+            code = prompt_room_code(create=True)
+        else:
+            invitation = prompt_room_reference(args.host, args.port)
+            code = invitation.code
+            args.host = invitation.host
+            args.port = invitation.port
+            args.tls = invitation.tls
     else:
         raise SystemExit("error: --room is required in non-interactive mode")
 
     # -- connect ---------------------------------------------------------------
+    invitation_code = crypto.format_invitation(
+        args.host, args.port, code, tls=args.tls,
+    )
+    if created:
+        print(f"  Share this invitation code: {invitation_code}")
     mode = "Tor" if args.tor else ("TLS" if args.tls else "TCP")
-    print(f"  Connecting to {args.host}:{args.port} via {mode} ...")
+    print(f"  Connecting to relay at {args.host}:{args.port} via {mode} ...")
     try:
         reader, writer, info = await transport.connect(
             args.host, args.port,
@@ -536,7 +572,8 @@ async def run(args) -> None:
 
     print("  Connected. Deriving room keys ...")
     session = ChatSession(code=code, name=name, reader=reader, writer=writer,
-                          conn_info=info, plain_join=args.plain_join)
+                          conn_info=info, plain_join=args.plain_join,
+                          invitation_code=invitation_code)
     try:
         await session.join()
     except transport.TransportError as exc:

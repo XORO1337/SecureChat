@@ -26,6 +26,8 @@ receivers reject replays (strictly increasing counters per sender tag).
 from __future__ import annotations
 
 import hashlib
+import base64
+import json
 import secrets
 from dataclasses import dataclass
 
@@ -104,6 +106,56 @@ def normalize_code(raw: str) -> str:
             "(digits + A-Z, excluding I, L, O, U) — e.g. ABCD-EFGH-JKMN-PQRS"
         )
     return compact
+
+
+@dataclass(frozen=True)
+class Invitation:
+    """A shareable relay endpoint and the secret room code."""
+
+    host: str
+    port: int
+    code: str
+    tls: bool = False
+
+
+def format_invitation(host: str, port: int, code: str, *, tls: bool = False) -> str:
+    """Encode relay connection details and a room code for sharing."""
+    host = (host or "").strip()
+    if not host or len(host) > 253 or any(ord(ch) < 32 for ch in host):
+        raise ValueError("invitation host is invalid")
+    if not 1 <= port <= 65535:
+        raise ValueError("invitation port must be between 1 and 65535")
+    compact = normalize_code(code)
+    payload = json.dumps(
+        {"h": host, "p": port, "t": bool(tls)}, separators=(",", ":")
+    ).encode()
+    endpoint = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    return f"SC1.{endpoint}.{format_code(compact)}"
+
+
+def parse_invitation(raw: str) -> Invitation:
+    """Decode an invitation, rejecting malformed endpoint data."""
+    parts = (raw or "").strip().split(".")
+    if len(parts) != 3 or parts[0].upper() != "SC1":
+        raise ValueError("not a SecureChat invitation")
+    try:
+        padding = "=" * (-len(parts[1]) % 4)
+        payload = json.loads(
+            base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8")
+        )
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invitation endpoint is malformed") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invitation endpoint is malformed")
+    host = payload.get("h")
+    port = payload.get("p")
+    tls = payload.get("t", False)
+    if (not isinstance(host, str) or not host.strip() or len(host) > 253
+            or any(ord(ch) < 32 for ch in host)
+            or isinstance(port, bool) or not isinstance(port, int)
+            or not 1 <= port <= 65535 or not isinstance(tls, bool)):
+        raise ValueError("invitation endpoint is invalid")
+    return Invitation(host.strip(), port, normalize_code(parts[2]), tls)
 
 
 # ---------------------------------------------------------------------------
