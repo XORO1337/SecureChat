@@ -56,18 +56,23 @@ python webui.py
 ```
 
 Open <http://127.0.0.1:8787>. The dashboard can start or stop the relay and
-launch a client using an invitation and username. It shows recent startup
-output, including the generated invitation and the actual fallback port.
-Use the theme selector to switch between Dark, Netherworld, Hacker,
-Terminalistic, Ocean, and Solarized styles; the selected theme is remembered
-in your browser. Starting a relay returns to the dashboard and opens the
-invitation in a popup; use **Show invitation** later to reopen it or copy it.
-The dashboard uses Tailwind CSS utilities from the official browser CDN for
-its responsive layout and interactive visual styling, so an internet
-connection is needed to load the enhanced styling; process controls still run
-locally.
+launch a client using an invitation and username. It shows live consoles for
+both processes (with the generated invitation and the actual fallback port
+highlighted) and status cards for the relay and client.
+Starting a relay returns to the dashboard and opens the invitation in a
+popup; use **Show invitation** later to reopen it or copy it.
+
+The page is a single self-contained document — hand-written CSS, no CDN and
+no internet access required. Eight themes are built in: **Dark**,
+**Netherworld**, **Hacker**, **Terminal**, **Interstellar**, **Ocean**,
+**Solarized**, and **Aurora**. The selected theme is remembered per browser,
+and themed ambient effects (matrix rain, starfield, rising embers, CRT
+scanlines) are disabled automatically for `prefers-reduced-motion` users.
 The client itself remains the existing terminal UI, launched as a managed
-process; the dashboard does not expose it to the network.
+process; the dashboard does not expose it to the network. On Windows the
+client opens in its **own console window** (the full-screen TUI needs a real
+console — piped output would crash it), and the dashboard tracks whether it
+is running; the relay's output stays mirrored in the dashboard console.
 
 The dashboard binds to localhost by default. Do not use `--host 0.0.0.0`
 unless it is protected by a firewall and an authenticated reverse proxy.
